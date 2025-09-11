@@ -9,43 +9,48 @@ const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, "public")));
 
-// Store messages and users
-const messages = new Map(); // msgId => msg object
-const users = {};           // username => socket.id
-const offlineQueue = {};    // username => [messages]
+// Users mapping shortName -> socketId
+const users = {}; 
+// Message storage: msgId -> message
+const messages = new Map();
+// Offline message queue: username -> [messages]
+const offlineQueue = {};
+
+// Map short username to full display name
+const DISPLAY_NAMES = {
+  AR: "Anirudh Ramakrishnan",
+  BK: "Bodireddy Kiran"
+};
 
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
-  // Register user
-  socket.on("register", (username) => {
-    users[username] = socket.id;
-    socket.username = username;
-    console.log("Registered:", username);
+  socket.on("register", (shortName) => {
+    users[shortName] = socket.id;
+    socket.shortName = shortName;
+    console.log(`Registered: ${DISPLAY_NAMES[shortName] || shortName}`);
 
-    // Send any queued messages
-    if (offlineQueue[username]) {
-      offlineQueue[username].forEach((msg) => {
+    // Send queued messages
+    if (offlineQueue[shortName]) {
+      offlineQueue[shortName].forEach((msg) => {
         io.to(socket.id).emit("newMessage", msg);
       });
-      delete offlineQueue[username];
+      delete offlineQueue[shortName];
     }
   });
 
-  // Send message
   socket.on("sendMessage", (msg) => {
     messages.set(msg.msgId, msg);
     const toSocket = users[msg.to];
     if (toSocket) {
       io.to(toSocket).emit("newMessage", msg);
     } else {
-      // queue if user offline
+      // queue offline
       if (!offlineQueue[msg.to]) offlineQueue[msg.to] = [];
       offlineQueue[msg.to].push(msg);
     }
   });
 
-  // Seen message → schedule deletion
   socket.on("seenMessage", (msgId) => {
     const m = messages.get(msgId);
     if (m && !m.timeout) {
@@ -58,10 +63,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    if (socket.username) {
-      delete users[socket.username];
-      console.log("Disconnected:", socket.username);
-    }
+    if (socket.shortName) delete users[socket.shortName];
   });
 });
 
