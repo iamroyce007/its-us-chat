@@ -4,47 +4,35 @@ let myUser = null;
 let myKey = null;
 let currentContact = null;
 
+// Credentials
+const USERS = { AR: "138", BK: "152" };
 const USER_MAP = { AR: "Anirudh Ramakrishnan", BK: "Bodireddy Kiran" };
-const PASS_MAP = { AR: "138", BK: "152" };
-
-// Crypto functions (same as before)
-async function deriveKey(password, saltText) {
-  const enc = new TextEncoder();
-  const passKey = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey({ name: "PBKDF2", salt: enc.encode(saltText), iterations: 120000, hash: "SHA-256" }, passKey, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
-}
-
-function toBase64(buf) { return btoa(String.fromCharCode(...new Uint8Array(buf))); }
-function fromBase64(b64) { const bin = atob(b64); return new Uint8Array(bin.length).map((_, i) => bin.charCodeAt(i)).buffer; }
-async function encryptData(key, plainBuf) { const iv = crypto.getRandomValues(new Uint8Array(12)); const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plainBuf); return { iv: toBase64(iv), ciphertext: toBase64(ct) }; }
-async function decryptData(key, ivB64, ctB64) { const iv = new Uint8Array(fromBase64(ivB64)); const ct = fromBase64(ctB64); return crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct); }
 
 // UI
-const loginScreen = document.getElementById("loginScreen");
-const chatScreen = document.getElementById("chatScreen");
-const loginBtn = document.getElementById("loginBtn");
-const usernameInput = document.getElementById("username");
-const passwordInput = document.getElementById("password");
-const userInfo = document.getElementById("userInfo");
-const contactsDiv = document.getElementById("contacts");
-const messagesDiv = document.getElementById("messages");
-const textInput = document.getElementById("textInput");
-const sendBtn = document.getElementById("sendBtn");
-const fileInput = document.getElementById("fileInput");
-const logoutBtn = document.getElementById("logoutBtn");
+const loginScreen = document.getElementById('loginScreen');
+const chatScreen = document.getElementById('chatScreen');
+const loginBtn = document.getElementById('loginBtn');
+const usernameInput = document.getElementById('username');
+const passwordInput = document.getElementById('password');
+const userInfo = document.getElementById('userInfo');
+const contactsDiv = document.getElementById('contacts');
+const messagesDiv = document.getElementById('messages');
+const textInput = document.getElementById('textInput');
+const sendBtn = document.getElementById('sendBtn');
+const fileInput = document.getElementById('fileInput');
+const logoutBtn = document.getElementById('logoutBtn');
 
 // Login
-loginBtn.onclick = async () => {
-  const shortName = usernameInput.value.trim();
-  const pass = passwordInput.value.trim();
+loginBtn.onclick = () => {
+  const u = usernameInput.value.trim();
+  const p = passwordInput.value.trim();
 
-  if (!USER_MAP[shortName] || PASS_MAP[shortName] !== pass) {
+  if (!USERS[u] || USERS[u] !== p) {
     alert("Invalid credentials!");
     return;
   }
 
-  myUser = shortName;
-  myKey = await deriveKey(pass, shortName);
+  myUser = u;
   socket.emit("register", myUser);
   showChat();
 };
@@ -56,65 +44,66 @@ function showChat() {
   chatScreen.classList.remove("hidden");
   userInfo.innerText = USER_MAP[myUser];
 
-  // Setup contacts
+  // contacts
   contactsDiv.innerHTML = "";
-  Object.keys(USER_MAP).forEach((u) => {
-    if (u === myUser) return;
+  for (let u in USERS) {
+    if (u === myUser) continue;
     const div = document.createElement("div");
     div.className = "contact";
     div.innerText = USER_MAP[u];
     div.onclick = () => selectContact(u, div);
     contactsDiv.appendChild(div);
     if (!currentContact) selectContact(u, div);
-  });
+  }
 }
 
 function selectContact(u, el) {
   currentContact = u;
-  document.querySelectorAll(".contact").forEach((c) => c.classList.remove("active"));
+  document.querySelectorAll(".contact").forEach(c => c.classList.remove("active"));
   el.classList.add("active");
   messagesDiv.innerHTML = "";
 }
 
-// Send messages
+// Messages
 sendBtn.onclick = async () => {
-  if (!currentContact) return alert("Select a contact first!");
+  if (!currentContact) return alert("Select a contact!");
+
   const text = textInput.value.trim();
   const file = fileInput.files[0];
-  const msgId = Date.now().toString() + Math.random().toString(36).slice(2, 8);
+  const msgId = Date.now().toString() + Math.random().toString(36).slice(2,8);
 
   if (file) {
     const buf = await file.arrayBuffer();
-    const { iv, ciphertext } = await encryptData(myKey, buf);
-    socket.emit("sendMessage", { msgId, from: myUser, to: currentContact, ciphertext, iv, isFile: true, filename: file.name, filetype: file.type });
-    fileInput.value = "";
+    socket.emit("sendMessage", {
+      msgId, from: myUser, to: currentContact,
+      isFile: true, filename: file.name, filetype: file.type, buffer: Array.from(new Uint8Array(buf))
+    });
+    fileInput.value = '';
   } else if (text) {
-    const enc = new TextEncoder().encode(text);
-    const { iv, ciphertext } = await encryptData(myKey, enc.buffer);
-    socket.emit("sendMessage", { msgId, from: myUser, to: currentContact, ciphertext, iv, isFile: false });
-    textInput.value = "";
+    socket.emit("sendMessage", { msgId, from: myUser, to: currentContact, isFile: false, text });
+    textInput.value = '';
   }
 };
 
 // Receive messages
-socket.on("newMessage", async (m) => {
+socket.on("newMessage", (m) => {
   if (m.to !== myUser) return;
-  try {
-    const plainBuf = await decryptData(myKey, m.iv, m.ciphertext);
-    const displayContent = m.isFile ? URL.createObjectURL(new Blob([plainBuf], { type: m.filetype })) : new TextDecoder().decode(plainBuf);
-    addMessageBubble({ msgId: m.msgId, from: USER_MAP[m.from], content: displayContent, isFile: m.isFile, filetype: m.filetype });
-    socket.emit("seenMessage", m.msgId);
-    setTimeout(() => document.querySelector(`[data-msg-id="${m.msgId}"]`)?.remove(), 7000);
-  } catch (e) { console.error("Decryption failed:", e); }
+
+  let content = m.isFile ? URL.createObjectURL(new Blob([new Uint8Array(m.buffer)], {type: m.filetype})) : m.text;
+  addMessageBubble({ msgId: m.msgId, from: m.from, content, isFile: m.isFile, filetype: m.filetype });
+  socket.emit("seenMessage", m.msgId);
+
+  setTimeout(() => document.querySelector(`[data-msg-id="${m.msgId}"]`)?.remove(), 7000);
 });
 
-function addMessageBubble({ msgId, from, content, isFile, filetype }) {
+function addMessageBubble({msgId, from, content, isFile, filetype}) {
   const wrap = document.createElement("div");
   wrap.className = "msg";
   wrap.dataset.msgId = msgId;
+
   const meta = document.createElement("div");
   meta.className = "meta";
-  meta.innerText = `${from} • ${new Date().toLocaleTimeString()}`;
+  meta.innerText = `${USER_MAP[from]} • ${new Date().toLocaleTimeString()}`;
   wrap.appendChild(meta);
 
   if (isFile && filetype.startsWith("image/")) {
@@ -135,6 +124,3 @@ function addMessageBubble({ msgId, from, content, isFile, filetype }) {
   messagesDiv.appendChild(wrap);
   messagesDiv.scrollTop = messagesDiv.scrollHeight;
 }
-
-// Enter key
-textInput.addEventListener("keypress", (e) => { if (e.key === "Enter") sendBtn.click(); });
