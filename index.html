@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>IT'S US Chat</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="loginScreen">
+    <h1>Login</h1>
+    <input id="username" placeholder="Username">
+    <input id="password" placeholder="Password" type="password">
+    <button id="loginBtn">Login</button>
+  </div>
+
+  <div id="chatScreen" class="hidden">
+    <h2>Welcome, <span id="userInfo"></span></h2>
+    <button id="logoutBtn">Logout</button>
+    <div id="contacts"></div>
+    <div id="chat-box">
+      <div id="messages"></div>
+    </div>
+    <input id="textInput" placeholder="Type a message">
+    <input type="file" id="fileInput">
+    <button id="sendBtn">Send</button>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

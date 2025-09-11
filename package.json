@@ -1,0 +1,31 @@
+{
+  "name": "its-us-chat",
+  "version": "1.0.0",
+  "description": "A simple real-time chat application for US users (or teams). Built with Node.js and Socket.io.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "echo \"Error: no test specified\" & exit 1"
+  },
+  "keywords": [
+    "chat",
+    "messaging",
+    "realtime",
+    "socket.io",
+    "nodejs"
+  ],
+  "author": "Anirudramakrishnan <your-email@example.com>",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/its-us-chat.git"
+  }
+}
