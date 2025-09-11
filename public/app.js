@@ -1,7 +1,6 @@
 const socket = io();
 
 let myUser = null;
-let myKey = null;
 let currentContact = null;
 
 // Credentials
@@ -44,7 +43,6 @@ function showChat() {
   chatScreen.classList.remove("hidden");
   userInfo.innerText = USER_MAP[myUser];
 
-  // contacts
   contactsDiv.innerHTML = "";
   for (let u in USERS) {
     if (u === myUser) continue;
@@ -78,9 +76,13 @@ sendBtn.onclick = async () => {
       msgId, from: myUser, to: currentContact,
       isFile: true, filename: file.name, filetype: file.type, buffer: Array.from(new Uint8Array(buf))
     });
+
+    addMessageBubble({ msgId, from: myUser, content: URL.createObjectURL(new Blob([new Uint8Array(buf)], {type: file.type})), isFile: true, filetype: file.type });
     fileInput.value = '';
   } else if (text) {
     socket.emit("sendMessage", { msgId, from: myUser, to: currentContact, isFile: false, text });
+
+    addMessageBubble({ msgId, from: myUser, content: text, isFile: false });
     textInput.value = '';
   }
 };
@@ -89,13 +91,12 @@ sendBtn.onclick = async () => {
 socket.on("newMessage", (m) => {
   if (m.to !== myUser) return;
 
-  let content = m.isFile ? URL.createObjectURL(new Blob([new Uint8Array(m.buffer)], {type: m.filetype})) : m.text;
+  const content = m.isFile ? URL.createObjectURL(new Blob([new Uint8Array(m.buffer)], {type: m.filetype})) : m.text;
   addMessageBubble({ msgId: m.msgId, from: m.from, content, isFile: m.isFile, filetype: m.filetype });
   socket.emit("seenMessage", m.msgId);
-
-  setTimeout(() => document.querySelector(`[data-msg-id="${m.msgId}"]`)?.remove(), 7000);
 });
 
+// Add message to chat with 7s auto-remove
 function addMessageBubble({msgId, from, content, isFile, filetype}) {
   const wrap = document.createElement("div");
   wrap.className = "msg";
@@ -123,4 +124,17 @@ function addMessageBubble({msgId, from, content, isFile, filetype}) {
 
   messagesDiv.appendChild(wrap);
   messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+  // Auto remove after 7s
+  setTimeout(() => {
+    wrap.remove();
+  }, 7000);
 }
+
+// Send on Enter key
+textInput.addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    sendBtn.click();
+  }
+});
