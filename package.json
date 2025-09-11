@@ -1,31 +1,19 @@
 {
   "name": "its-us-chat",
   "version": "1.0.0",
-  "description": "A simple real-time chat application for US users (or teams). Built with Node.js and Socket.io.",
-  "main": "index.js",
+  "description": "Real-time chat app with messages auto-delete",
+  "main": "server.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js",
-    "test": "echo \"Error: no test specified\" & exit 1"
+    "start": "node server.js"
   },
-  "keywords": [
-    "chat",
-    "messaging",
-    "realtime",
-    "socket.io",
-    "nodejs"
-  ],
-  "author": "Anirudramakrishnan <your-email@example.com>",
-  "license": "ISC",
   "dependencies": {
-    "express": "^4.21.2",
-    "socket.io": "^4.8.1"
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2"
   },
-  "devDependencies": {
-    "nodemon": "^3.0.2"
+  "engines": {
+    "node": "18.x"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/yourusername/its-us-chat.git"
-  }
+  "keywords": ["chat", "socket.io", "nodejs"],
+  "author": "Anirudh",
+  "license": "MIT"
 }
