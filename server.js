@@ -78,7 +78,15 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    if (socket.shortName) {
+    if (!socket.shortName) return;
+
+    // Only clear the slot if this socket still owns it. A dropped connection
+    // is not always noticed before the same user reconnects: register() sees
+    // the old socket is gone and hands the identity to the new one, and the
+    // late disconnect event then deleted an entry that now belongs to the
+    // live connection - leaving the user registered but unroutable, with
+    // every message to them queued as undelivered.
+    if (users[socket.shortName] === socket.id) {
       delete users[socket.shortName];
       console.log("Disconnected:", socket.shortName);
     }
