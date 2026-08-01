@@ -21,6 +21,13 @@ io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
   socket.on("register", (shortName) => {
+    if (!USER_MAP[shortName]) return; // unknown user
+
+    const existing = users[shortName];
+    if (existing && existing !== socket.id && io.sockets.sockets.get(existing)) {
+      return; // identity already active on another connection
+    }
+
     users[shortName] = socket.id;
     socket.shortName = shortName;
 
@@ -36,13 +43,26 @@ io.on("connection", (socket) => {
   });
 
   socket.on("sendMessage", (msg) => {
-    messages.set(msg.msgId, { ...msg, delivered: false });
+    if (!socket.shortName) return; // must register before sending
+    if (!msg || typeof msg.msgId !== "string" || !msg.msgId) return;
+    if (!USER_MAP[msg.to]) return; // unknown recipient
 
-    const toSocket = users[msg.to];
+    // Never trust the client's claimed sender; use the registered identity.
+    const safeMsg = { ...msg, from: socket.shortName };
+
+    if (safeMsg.isFile) {
+      if (!safeMsg.filename || !Array.isArray(safeMsg.buffer)) return;
+    } else if (typeof safeMsg.text !== "string" || !safeMsg.text.trim()) {
+      return;
+    }
+
+    messages.set(safeMsg.msgId, { ...safeMsg, delivered: false });
+
+    const toSocket = users[safeMsg.to];
     if (toSocket) {
-      io.to(toSocket).emit("newMessage", msg);
-      msg.delivered = true;
-      messages.set(msg.msgId, msg);
+      io.to(toSocket).emit("newMessage", safeMsg);
+      safeMsg.delivered = true;
+      messages.set(safeMsg.msgId, safeMsg);
     }
   });
 
