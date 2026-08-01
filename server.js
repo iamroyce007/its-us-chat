@@ -17,6 +17,13 @@ const messages = new Map(); // msgId => message object
 // Map short names to full names
 const USER_MAP = { AR: "Anirudh Ramakrishnan", BK: "Bodireddy Kiran" };
 
+// Payload ceilings. Files arrive as a plain array of byte values, one JS
+// number per byte, so an unbounded upload is many times its own size in
+// server memory before anything checks it.
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_FILENAME_LENGTH = 255;
+const MAX_TEXT_LENGTH = 4000;
+
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
@@ -47,13 +54,35 @@ io.on("connection", (socket) => {
     if (!msg || typeof msg.msgId !== "string" || !msg.msgId) return;
     if (!USER_MAP[msg.to]) return; // unknown recipient
 
-    // Never trust the client's claimed sender; use the registered identity.
-    const safeMsg = { ...msg, from: socket.shortName };
-
-    if (safeMsg.isFile) {
-      if (!safeMsg.filename || !Array.isArray(safeMsg.buffer)) return;
-    } else if (typeof safeMsg.text !== "string" || !safeMsg.text.trim()) {
-      return;
+    // Build the stored message from named fields rather than spreading what
+    // the client sent. A spread also copied the server's own bookkeeping if
+    // the client chose to send it: `delivered: true` made the message skip
+    // the pending-delivery pass on register, and a truthy `timeout` made
+    // seenMessage believe deletion was already scheduled, so the message
+    // survived the auto-delete this app is built around.
+    let safeMsg;
+    if (msg.isFile) {
+      if (typeof msg.filename !== "string" || !msg.filename) return;
+      if (!Array.isArray(msg.buffer) || msg.buffer.length > MAX_FILE_BYTES) return;
+      safeMsg = {
+        msgId: msg.msgId,
+        from: socket.shortName, // never the client's claimed sender
+        to: msg.to,
+        isFile: true,
+        filename: msg.filename.slice(0, MAX_FILENAME_LENGTH),
+        filetype: typeof msg.filetype === "string" ? msg.filetype : "",
+        buffer: msg.buffer,
+      };
+    } else {
+      if (typeof msg.text !== "string" || !msg.text.trim()) return;
+      if (msg.text.length > MAX_TEXT_LENGTH) return;
+      safeMsg = {
+        msgId: msg.msgId,
+        from: socket.shortName,
+        to: msg.to,
+        isFile: false,
+        text: msg.text,
+      };
     }
 
     messages.set(safeMsg.msgId, { ...safeMsg, delivered: false });
@@ -61,8 +90,7 @@ io.on("connection", (socket) => {
     const toSocket = users[safeMsg.to];
     if (toSocket) {
       io.to(toSocket).emit("newMessage", safeMsg);
-      safeMsg.delivered = true;
-      messages.set(safeMsg.msgId, safeMsg);
+      messages.set(safeMsg.msgId, { ...safeMsg, delivered: true });
     }
   });
 
