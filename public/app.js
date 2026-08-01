@@ -59,7 +59,7 @@ function selectContact(u, el) {
   currentContact = u;
   document.querySelectorAll(".contact").forEach(c => c.classList.remove("active"));
   el.classList.add("active");
-  messagesDiv.innerHTML = "";
+  clearMessages();
 }
 
 // Messages
@@ -96,22 +96,57 @@ socket.on("newMessage", (m) => {
   socket.emit("seenMessage", m.msgId);
 });
 
+// The server retires a message once the recipient has seen it and tells both
+// participants. Without this handler that event was ignored: the bubble only
+// ever went away on its own 7s timer, so a message the server had already
+// deleted could still be on screen.
+socket.on("deleteMessage", (msgId) => removeMessageBubble(msgId));
+
+// Blob URLs for received files, so they can be released. Each one pins its
+// blob in memory until revoked, and a session of image sharing otherwise
+// holds every file it ever displayed until the tab is closed.
+const objectUrls = new Map(); // msgId => object URL
+
+function clearMessages() {
+  // Emptying the pane on its own would strip the bubbles but leave their
+  // blobs alive with nothing left holding a reference to revoke them.
+  for (const url of objectUrls.values()) URL.revokeObjectURL(url);
+  objectUrls.clear();
+  messagesDiv.innerHTML = "";
+}
+
+function removeMessageBubble(msgId) {
+  const url = objectUrls.get(msgId);
+  if (url) {
+    URL.revokeObjectURL(url);
+    objectUrls.delete(msgId);
+  }
+  const wrap = messagesDiv.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);
+  if (wrap) wrap.remove();
+}
+
 // Add message to chat with 7s auto-remove
 function addMessageBubble({msgId, from, content, isFile, filetype}) {
   const wrap = document.createElement("div");
   wrap.className = "msg";
   wrap.dataset.msgId = msgId;
+  if (isFile) objectUrls.set(msgId, content);
 
   const meta = document.createElement("div");
   meta.className = "meta";
   meta.innerText = `${USER_MAP[from]} • ${new Date().toLocaleTimeString()}`;
   wrap.appendChild(meta);
 
-  if (isFile && filetype.startsWith("image/")) {
+  // A file picked with no recognised type has an empty string here, and a
+  // sender that omitted it entirely leaves it undefined - which used to
+  // throw on .startsWith and lose the whole bubble.
+  const kind = typeof filetype === "string" ? filetype : "";
+
+  if (isFile && kind.startsWith("image/")) {
     const img = document.createElement("img");
     img.src = content;
     wrap.appendChild(img);
-  } else if (isFile && filetype.startsWith("video/")) {
+  } else if (isFile && kind.startsWith("video/")) {
     const video = document.createElement("video");
     video.controls = true;
     video.src = content;
@@ -127,7 +162,7 @@ function addMessageBubble({msgId, from, content, isFile, filetype}) {
 
   // Auto remove after 7s
   setTimeout(() => {
-    wrap.remove();
+    removeMessageBubble(msgId);
   }, 7000);
 }
 
