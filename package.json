@@ -4,7 +4,8 @@
   "description": "Real-time chat app with messages auto-delete",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "dependencies": {
     "express": "^4.18.2",
@@ -13,7 +14,14 @@
   "engines": {
     "node": "18.x"
   },
-  "keywords": ["chat", "socket.io", "nodejs"],
+  "keywords": [
+    "chat",
+    "socket.io",
+    "nodejs"
+  ],
   "author": "Anirudh",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "socket.io-client": "^4.7.2"
+  }
 }
