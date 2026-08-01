@@ -13,6 +13,14 @@ app.use(express.static(path.join(__dirname, "public")));
 // Users and messages
 const users = {};       // { shortName: socketId }
 const messages = new Map(); // msgId => message object
+// Pending deletions, keyed by message id. Kept beside the store rather than
+// on the message itself: the message object is emitted over the wire, and a
+// Timer handle has no business being serialised into it.
+const deletionTimers = new Map(); // msgId => Timeout
+
+// How long a message lingers after the recipient has seen it. Matches the
+// client's own bubble timeout.
+const SEEN_DELETE_MS = 7000;
 
 // Map short names to full names
 const USER_MAP = { AR: "Anirudh Ramakrishnan", BK: "Bodireddy Kiran" };
@@ -23,6 +31,14 @@ const USER_MAP = { AR: "Anirudh Ramakrishnan", BK: "Bodireddy Kiran" };
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_FILENAME_LENGTH = 255;
 const MAX_TEXT_LENGTH = 4000;
+
+/** Emit to whichever of a message's two participants are connected. */
+function emitToParticipants(msg, event, payload) {
+  for (const shortName of new Set([msg.from, msg.to])) {
+    const socketId = users[shortName];
+    if (socketId) io.to(socketId).emit(event, payload);
+  }
+}
 
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
@@ -95,14 +111,24 @@ io.on("connection", (socket) => {
   });
 
   socket.on("seenMessage", (msgId) => {
+    if (typeof msgId !== "string") return;
+
     const m = messages.get(msgId);
-    if (m && !m.timeout) {
-      m.timeout = setTimeout(() => {
+    // Only the recipient can start the countdown. Any connected socket used
+    // to be able to retire someone else's message by naming its id, and the
+    // deletion was then broadcast to every client rather than to the two
+    // people in the conversation.
+    if (!m || m.to !== socket.shortName) return;
+    if (deletionTimers.has(msgId)) return;
+
+    deletionTimers.set(
+      msgId,
+      setTimeout(() => {
+        deletionTimers.delete(msgId);
         messages.delete(msgId);
-        io.emit("deleteMessage", msgId);
-      }, 7000);
-      messages.set(msgId, m);
-    }
+        emitToParticipants(m, "deleteMessage", msgId);
+      }, SEEN_DELETE_MS)
+    );
   });
 
   socket.on("disconnect", () => {
