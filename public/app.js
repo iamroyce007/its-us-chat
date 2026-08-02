@@ -72,9 +72,13 @@ sendBtn.onclick = async () => {
 
   if (file) {
     const buf = await file.arrayBuffer();
+    // Sent as a typed array so socket.io carries it as a binary attachment.
+    // Array.from() turned every byte into a JS number that serialised as up to
+    // four characters of JSON, which pushed even a small image past the
+    // transport's frame limit and got the connection closed.
     socket.emit("sendMessage", {
       msgId, from: myUser, to: currentContact,
-      isFile: true, filename: file.name, filetype: file.type, buffer: Array.from(new Uint8Array(buf))
+      isFile: true, filename: file.name, filetype: file.type, buffer: new Uint8Array(buf)
     });
 
     addMessageBubble({ msgId, from: myUser, content: URL.createObjectURL(new Blob([new Uint8Array(buf)], {type: file.type})), isFile: true, filetype: file.type });

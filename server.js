@@ -5,7 +5,19 @@ const path = require("path");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+
+// Payload ceilings. Files travel as a binary attachment, so a byte on disk is
+// a byte on the wire and MAX_FILE_BYTES means what it says.
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_FILENAME_LENGTH = 255;
+const MAX_TEXT_LENGTH = 4000;
+
+// Engine.IO rejects any frame larger than this and closes the connection that
+// sent it, so it has to clear the largest message the app itself allows. The
+// slack covers the JSON envelope travelling alongside the attachment.
+const MAX_PACKET_BYTES = MAX_FILE_BYTES + 64 * 1024;
+
+const io = new Server(server, { maxHttpBufferSize: MAX_PACKET_BYTES });
 
 // Serve static files
 app.use(express.static(path.join(__dirname, "public")));
@@ -24,13 +36,6 @@ const SEEN_DELETE_MS = 7000;
 
 // Map short names to full names
 const USER_MAP = { AR: "Anirudh Ramakrishnan", BK: "Bodireddy Kiran" };
-
-// Payload ceilings. Files arrive as a plain array of byte values, one JS
-// number per byte, so an unbounded upload is many times its own size in
-// server memory before anything checks it.
-const MAX_FILE_BYTES = 10 * 1024 * 1024;
-const MAX_FILENAME_LENGTH = 255;
-const MAX_TEXT_LENGTH = 4000;
 
 /** Emit to whichever of a message's two participants are connected. */
 function emitToParticipants(msg, event, payload) {
@@ -79,7 +84,12 @@ io.on("connection", (socket) => {
     let safeMsg;
     if (msg.isFile) {
       if (typeof msg.filename !== "string" || !msg.filename) return;
-      if (!Array.isArray(msg.buffer) || msg.buffer.length > MAX_FILE_BYTES) return;
+      // socket.io hands a binary attachment over as a Buffer. An array of byte
+      // numbers is no longer accepted: it inflated a file to roughly four
+      // times its size on the wire, so anything past ~250 KB blew through the
+      // transport's frame limit and the sender's socket was closed outright,
+      // long before MAX_FILE_BYTES ever came into it.
+      if (!Buffer.isBuffer(msg.buffer) || msg.buffer.length > MAX_FILE_BYTES) return;
       safeMsg = {
         msgId: msg.msgId,
         from: socket.shortName, // never the client's claimed sender

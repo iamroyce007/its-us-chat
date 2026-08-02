@@ -99,6 +99,47 @@ test("rejects an oversized message", async () => {
   assert.ok(!bk.received.some((m) => m.msgId === "m4"));
 });
 
+test("carries a file far larger than the old array-of-bytes ceiling", async () => {
+  // 1 MB. Encoded as an array of byte numbers this was roughly 4 MB of JSON,
+  // which exceeded the transport's frame limit: the file never arrived and the
+  // sender's socket was closed instead.
+  const payload = Buffer.alloc(1024 * 1024, 7);
+  let senderDropped = false;
+  ar.once("disconnect", () => {
+    senderDropped = true;
+  });
+
+  ar.emit("sendMessage", {
+    msgId: "f1",
+    to: "BK",
+    isFile: true,
+    filename: "big.bin",
+    filetype: "application/octet-stream",
+    buffer: payload,
+  });
+  await wait(1500);
+
+  assert.ok(!senderDropped, "the sender's connection was closed by the payload");
+  const got = bk.received.find((m) => m.msgId === "f1");
+  assert.ok(got, "the file was not delivered");
+  assert.equal(got.filename, "big.bin");
+  assert.equal(Buffer.from(got.buffer).length, payload.length);
+});
+
+test("rejects a file payload sent as an array of byte numbers", async () => {
+  ar.emit("sendMessage", {
+    msgId: "f2",
+    to: "BK",
+    isFile: true,
+    filename: "small.bin",
+    filetype: "application/octet-stream",
+    buffer: [1, 2, 3],
+  });
+  await wait(300);
+
+  assert.ok(!bk.received.some((m) => m.msgId === "f2"));
+});
+
 test("only the recipient can retire a message, and only they are told", async () => {
   const stranger = await connect(null);
 
