@@ -29,10 +29,23 @@ const messages = new Map(); // msgId => message object
 // on the message itself: the message object is emitted over the wire, and a
 // Timer handle has no business being serialised into it.
 const deletionTimers = new Map(); // msgId => Timeout
+// Backstop expiry, one per stored message. The seen-countdown only starts if
+// the recipient acknowledges, so on its own it never reclaims a message that
+// was queued for someone who never came back, or delivered to a tab that was
+// closed before it acknowledged. Those sat in `messages` for the process's
+// whole life, and a single one of them can now pin MAX_FILE_BYTES.
+const expiryTimers = new Map(); // msgId => Timeout
 
 // How long a message lingers after the recipient has seen it. Matches the
 // client's own bubble timeout.
 const SEEN_DELETE_MS = 7000;
+
+// Longest a message is kept without the recipient ever acknowledging it. Long
+// enough to survive an offline spell and be delivered on the next register,
+// short enough that nothing lingers in a chat built around disappearing
+// messages. Overridable so the expiry can be exercised without an hour's wait.
+const UNSEEN_EXPIRY_MS =
+  Number(process.env.UNSEEN_EXPIRY_MS) || 60 * 60 * 1000;
 
 // Map short names to full names
 const USER_MAP = { AR: "Anirudh Ramakrishnan", BK: "Bodireddy Kiran" };
@@ -43,6 +56,15 @@ function emitToParticipants(msg, event, payload) {
     const socketId = users[shortName];
     if (socketId) io.to(socketId).emit(event, payload);
   }
+}
+
+/** Drop a message and every timer still holding it. */
+function forget(msgId) {
+  clearTimeout(deletionTimers.get(msgId));
+  deletionTimers.delete(msgId);
+  clearTimeout(expiryTimers.get(msgId));
+  expiryTimers.delete(msgId);
+  messages.delete(msgId);
 }
 
 io.on("connection", (socket) => {
@@ -120,6 +142,16 @@ io.on("connection", (socket) => {
 
     messages.set(safeMsg.msgId, { ...safeMsg, delivered: false });
 
+    // Armed at store time so it covers the message whether or not it is ever
+    // delivered or acknowledged. unref()'d because the listening server is
+    // what should keep the process alive, not an hour-long timer.
+    const expiry = setTimeout(() => {
+      forget(safeMsg.msgId);
+      emitToParticipants(safeMsg, "deleteMessage", safeMsg.msgId);
+    }, UNSEEN_EXPIRY_MS);
+    expiry.unref();
+    expiryTimers.set(safeMsg.msgId, expiry);
+
     const toSocket = users[safeMsg.to];
     if (toSocket) {
       io.to(toSocket).emit("newMessage", safeMsg);
@@ -141,8 +173,7 @@ io.on("connection", (socket) => {
     deletionTimers.set(
       msgId,
       setTimeout(() => {
-        deletionTimers.delete(msgId);
-        messages.delete(msgId);
+        forget(msgId);
         emitToParticipants(m, "deleteMessage", msgId);
       }, SEEN_DELETE_MS)
     );

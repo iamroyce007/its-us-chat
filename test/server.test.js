@@ -158,6 +158,41 @@ test("refuses to reuse the id of a message still in flight", async () => {
   assert.equal(got[0].text, "original", "a queued message was overwritten");
 });
 
+test("drops a message the recipient never acknowledged", async () => {
+  // Its own server, on its own port, with the expiry wound down from an hour
+  // to a beat - the shared one has to keep messages alive for the other tests.
+  const port = Number(PORT) + 1;
+  const proc = spawn("node", [path.join(__dirname, "..", "server.js")], {
+    env: { ...process.env, PORT: String(port), UNSEEN_EXPIRY_MS: "1500" },
+    stdio: "ignore",
+  });
+  try {
+    await wait(700);
+    const sender = io(`http://127.0.0.1:${port}`, { transports: ["websocket"] });
+    await new Promise((resolve) => sender.on("connect", resolve));
+    sender.emit("register", "AR");
+    await wait(200);
+
+    // Never delivered, never seen: BK is not connected to this server at all.
+    sender.emit("sendMessage", { msgId: "stale", to: "BK", isFile: false, text: "unread" });
+    await wait(2500);
+
+    // If the message were still held, registering as BK would deliver it.
+    const late = io(`http://127.0.0.1:${port}`, { transports: ["websocket"] });
+    late.received = [];
+    late.on("newMessage", (m) => late.received.push(m));
+    await new Promise((resolve) => late.on("connect", resolve));
+    late.emit("register", "BK");
+    await wait(500);
+
+    assert.deepEqual(late.received, [], "an unacknowledged message was kept indefinitely");
+    sender.disconnect();
+    late.disconnect();
+  } finally {
+    proc.kill();
+  }
+});
+
 test("only the recipient can retire a message, and only they are told", async () => {
   const stranger = await connect(null);
 
