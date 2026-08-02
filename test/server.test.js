@@ -140,6 +140,24 @@ test("rejects a file payload sent as an array of byte numbers", async () => {
   assert.ok(!bk.received.some((m) => m.msgId === "f2"));
 });
 
+test("refuses to reuse the id of a message still in flight", async () => {
+  // Queue one for BK while they are away, then try to store over it.
+  bk.disconnect();
+  await wait(300);
+
+  ar.emit("sendMessage", { msgId: "dup", to: "BK", isFile: false, text: "original" });
+  await wait(250);
+  ar.emit("sendMessage", { msgId: "dup", to: "BK", isFile: false, text: "clobbered" });
+  await wait(250);
+
+  bk = await connect("BK");
+  await wait(400);
+
+  const got = bk.received.filter((m) => m.msgId === "dup");
+  assert.equal(got.length, 1);
+  assert.equal(got[0].text, "original", "a queued message was overwritten");
+});
+
 test("only the recipient can retire a message, and only they are told", async () => {
   const stranger = await connect(null);
 

@@ -75,6 +75,13 @@ io.on("connection", (socket) => {
     if (!msg || typeof msg.msgId !== "string" || !msg.msgId) return;
     if (!USER_MAP[msg.to]) return; // unknown recipient
 
+    // Message ids come from the client, so an id already in flight has to be
+    // refused rather than stored over. Reusing one replaced whatever it named:
+    // a message still queued for an offline recipient was destroyed before
+    // they ever saw it, and the deletion timer left behind under that id would
+    // then retire the replacement early and announce it to the wrong pair.
+    if (messages.has(msg.msgId)) return;
+
     // Build the stored message from named fields rather than spreading what
     // the client sent. A spread also copied the server's own bookkeeping if
     // the client chose to send it: `delivered: true` made the message skip
