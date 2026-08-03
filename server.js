@@ -18,9 +18,24 @@ const messages = new Map(); // msgId => message object
 // Timer handle has no business being serialised into it.
 const deletionTimers = new Map(); // msgId => Timeout
 
+// Message ids whose post-seen countdown has already begun. Kept apart from
+// deletionTimers because every stored message now carries a timer, so the
+// presence of one no longer means "the recipient has seen this".
+const seenMessages = new Set();
+
 // How long a message lingers after the recipient has seen it. Matches the
 // client's own bubble timeout.
 const SEEN_DELETE_MS = 7000;
+
+// Ceilings on the message store itself. Only seenMessage ever retired a
+// message, and an offline recipient never sends one - so anything undelivered
+// stayed in memory for the lifetime of the process. With file payloads allowed
+// up to MAX_FILE_BYTES apiece, that store is by far the largest thing this
+// server holds, and it only ever grew.
+const UNSEEN_EXPIRY_MS = Number(process.env.UNSEEN_EXPIRY_MS) || 24 * 60 * 60 * 1000;
+// An expiry alone still lets a whole day's traffic pile up, so cap the count
+// as well and evict oldest-first. Map iterates in insertion order.
+const MAX_STORED_MESSAGES = Number(process.env.MAX_STORED_MESSAGES) || 500;
 
 // Map short names to full names
 const USER_MAP = { AR: "Anirudh Ramakrishnan", BK: "Bodireddy Kiran" };
@@ -37,6 +52,43 @@ function emitToParticipants(msg, event, payload) {
   for (const shortName of new Set([msg.from, msg.to])) {
     const socketId = users[shortName];
     if (socketId) io.to(socketId).emit(event, payload);
+  }
+}
+
+/** Drop a message and release everything held alongside it. */
+function forgetMessage(msgId) {
+  const timer = deletionTimers.get(msgId);
+  if (timer) clearTimeout(timer);
+  deletionTimers.delete(msgId);
+  seenMessages.delete(msgId);
+  messages.delete(msgId);
+}
+
+/**
+ * Schedule a message's removal, replacing whatever timer it already had. Every
+ * message gets one at send time; seeing it only shortens the wait.
+ */
+function scheduleDeletion(msg, delayMs) {
+  const existing = deletionTimers.get(msg.msgId);
+  if (existing) clearTimeout(existing);
+
+  deletionTimers.set(
+    msg.msgId,
+    setTimeout(() => {
+      forgetMessage(msg.msgId);
+      emitToParticipants(msg, "deleteMessage", msg.msgId);
+    }, delayMs)
+  );
+}
+
+/** Evict oldest-first until the store is back under its ceiling. */
+function evictOverflow() {
+  while (messages.size > MAX_STORED_MESSAGES) {
+    const oldest = messages.keys().next().value;
+    if (oldest === undefined) return;
+    const msg = messages.get(oldest);
+    forgetMessage(oldest);
+    if (msg) emitToParticipants(msg, "deleteMessage", oldest);
   }
 }
 
@@ -102,6 +154,8 @@ io.on("connection", (socket) => {
     }
 
     messages.set(safeMsg.msgId, { ...safeMsg, delivered: false });
+    scheduleDeletion(safeMsg, UNSEEN_EXPIRY_MS);
+    evictOverflow();
 
     const toSocket = users[safeMsg.to];
     if (toSocket) {
@@ -119,16 +173,10 @@ io.on("connection", (socket) => {
     // deletion was then broadcast to every client rather than to the two
     // people in the conversation.
     if (!m || m.to !== socket.shortName) return;
-    if (deletionTimers.has(msgId)) return;
+    if (seenMessages.has(msgId)) return; // countdown already running
 
-    deletionTimers.set(
-      msgId,
-      setTimeout(() => {
-        deletionTimers.delete(msgId);
-        messages.delete(msgId);
-        emitToParticipants(m, "deleteMessage", msgId);
-      }, SEEN_DELETE_MS)
-    );
+    seenMessages.add(msgId);
+    scheduleDeletion(m, SEEN_DELETE_MS);
   });
 
   socket.on("disconnect", () => {

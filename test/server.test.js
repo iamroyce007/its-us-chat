@@ -25,8 +25,8 @@ const sockets = [];
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Connect a client and, when given a name, register it. */
-function connect(shortName) {
-  const socket = io(URL, { transports: ["websocket"] });
+function connect(shortName, url = URL) {
+  const socket = io(url, { transports: ["websocket"] });
   socket.received = [];
   socket.deleted = [];
   socket.on("newMessage", (m) => socket.received.push(m));
@@ -113,6 +113,39 @@ test("only the recipient can retire a message, and only they are told", async ()
   assert.ok(bk.deleted.includes("m2"));
   assert.ok(ar.deleted.includes("m2"));
   assert.ok(!stranger.deleted.includes("m2"), "the delete was broadcast to everyone");
+});
+
+test("evicts the oldest message once the store reaches its ceiling", async () => {
+  // A message nobody sees is never retired by seenMessage, so the store used
+  // to grow for the life of the process. Run a server with a ceiling of two to
+  // watch the third send push the first one out.
+  const port = Number(PORT) + 1;
+  const capped = spawn("node", [path.join(__dirname, "..", "server.js")], {
+    env: { ...process.env, PORT: String(port), MAX_STORED_MESSAGES: "2" },
+    stdio: "ignore",
+  });
+  await wait(700);
+
+  const url = `http://127.0.0.1:${port}`;
+  const sender = await connect("AR", url);
+  const recipient = await connect("BK", url);
+  await wait(200);
+
+  try {
+    // Nobody marks these seen; only the ceiling can retire them.
+    for (const msgId of ["e1", "e2", "e3"]) {
+      sender.emit("sendMessage", { msgId, to: "BK", isFile: false, text: msgId });
+      await wait(150);
+    }
+    await wait(300);
+
+    assert.ok(recipient.deleted.includes("e1"), "the oldest message was not evicted");
+    assert.ok(!recipient.deleted.includes("e2"));
+    assert.ok(!recipient.deleted.includes("e3"));
+    assert.ok(sender.deleted.includes("e1"), "the sender was not told about the eviction");
+  } finally {
+    capped.kill();
+  }
 });
 
 test("a late disconnect does not evict the reconnected identity", async () => {
