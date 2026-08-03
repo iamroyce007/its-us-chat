@@ -115,6 +115,32 @@ test("only the recipient can retire a message, and only they are told", async ()
   assert.ok(!stranger.deleted.includes("m2"), "the delete was broadcast to everyone");
 });
 
+test("delivers a file larger than the transport's default payload ceiling", async () => {
+  // A file crosses the wire as a JSON array of byte values, so 600 KB of file
+  // is ~2.4 MB of payload - past engine.io's 1 MB default, and far under the
+  // 10 MB the server says it accepts. It used to disconnect the sender
+  // mid-send rather than deliver the file or reject it.
+  const buffer = Array.from({ length: 600 * 1024 }, () => 200);
+  let dropped = false;
+  ar.on("disconnect", () => {
+    dropped = true;
+  });
+
+  ar.emit("sendMessage", {
+    msgId: "big",
+    to: "BK",
+    isFile: true,
+    filename: "big.bin",
+    buffer,
+  });
+  await wait(2500);
+
+  assert.ok(!dropped, "the sender was disconnected mid-send");
+  const got = bk.received.find((m) => m.msgId === "big");
+  assert.ok(got, "the file was not delivered");
+  assert.equal(got.buffer.length, buffer.length);
+});
+
 test("evicts the oldest message once the store reaches its ceiling", async () => {
   // A message nobody sees is never retired by seenMessage, so the store used
   // to grow for the life of the process. Run a server with a ceiling of two to

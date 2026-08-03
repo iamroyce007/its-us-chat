@@ -3,9 +3,28 @@ const http = require("http");
 const { Server } = require("socket.io");
 const path = require("path");
 
+// Payload ceilings. Files arrive as a plain array of byte values, one JS
+// number per byte, so an unbounded upload is many times its own size in
+// server memory before anything checks it.
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_FILENAME_LENGTH = 255;
+const MAX_TEXT_LENGTH = 4000;
+
+// That array is also what crosses the wire, as JSON: one file byte costs up
+// to four characters ("255,"). engine.io caps a payload at 1 MB by default,
+// which put the real ceiling near a quarter megabyte - two orders of
+// magnitude below the limit above, and nothing reconciled the two. A file
+// over it was not rejected with an error either; the payload trips the
+// transport, so the sender was simply disconnected mid-send.
+const WIRE_BYTES_PER_FILE_BYTE = 4;
+// Room for the event name, filename, mime type and framing around the array.
+const WIRE_OVERHEAD_BYTES = 64 * 1024;
+
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+  maxHttpBufferSize: MAX_FILE_BYTES * WIRE_BYTES_PER_FILE_BYTE + WIRE_OVERHEAD_BYTES,
+});
 
 // Serve static files
 app.use(express.static(path.join(__dirname, "public")));
@@ -39,13 +58,6 @@ const MAX_STORED_MESSAGES = Number(process.env.MAX_STORED_MESSAGES) || 500;
 
 // Map short names to full names
 const USER_MAP = { AR: "Anirudh Ramakrishnan", BK: "Bodireddy Kiran" };
-
-// Payload ceilings. Files arrive as a plain array of byte values, one JS
-// number per byte, so an unbounded upload is many times its own size in
-// server memory before anything checks it.
-const MAX_FILE_BYTES = 10 * 1024 * 1024;
-const MAX_FILENAME_LENGTH = 255;
-const MAX_TEXT_LENGTH = 4000;
 
 /** Emit to whichever of a message's two participants are connected. */
 function emitToParticipants(msg, event, payload) {
